@@ -544,7 +544,7 @@ class DisplaySettingsTab(QWidget):
         layout.addLayout(form_layout)
         layout.addLayout(preview_layout)
         layout.addStretch()
-    
+
     def choose_color(self):
         current_color = QColor(self.display_settings.text_color)
         color = QColorDialog.getColor(current_color, self, "텍스트 색상 선택")
@@ -1414,24 +1414,25 @@ class RouletteApp(QMainWindow):
 
 
     def copy_profile_link(self):
-            # 현재 프로필 인덱스 가져오기 (1-기반 번호로 변환 +1)
-            profile_number = self.current_profile_index + 1
-            
-            # 현재 호스트와 포트 가져오기 (기본값: 127.0.0.1:8080)
-            host = "127.0.0.1"
-            port = 8080
-            
-            # URL 생성
-            url = f"http://{host}:{port}/r{profile_number}"
-            
-            # 클립보드에 URL 복사
-            clipboard = QApplication.clipboard()
-            clipboard.setText(url)
-            
-            # 사용자에게 알림
-            QMessageBox.information(self, "링크 복사", 
-                                f"프로필 '{self.current_profile.name}'의 URL이 클립보드에 복사되었습니다:\n{url}\n\n"
-                                f"이 URL을 통해 원격으로 '{self.current_profile.name}' 프로필의 룰렛을 실행할 수 있습니다.")
+        """프로필 링크 복사 (닉네임 매개변수 포함)"""
+        # 현재 프로필 인덱스 가져오기 (1-기반 번호로 변환 +1)
+        profile_number = self.current_profile_index + 1
+        
+        # 현재 호스트와 포트 가져오기
+        host = "127.0.0.1"
+        port = 8080
+        
+        # URL 생성 (닉네임 매개변수 안내)
+        url = f"http://{host}:{port}/r{profile_number}?nickname=사용자닉네임"
+        
+        # 클립보드에 URL 복사
+        clipboard = QApplication.clipboard()
+        clipboard.setText(url)
+        
+        # 사용자에게 알림
+        QMessageBox.information(self, "링크 복사", 
+                            f"프로필 '{self.current_profile.name}'의 URL이 클립보드에 복사되었습니다:\n{url}\n\n"
+                            f"이 URL에서 'nickname=' 부분을 수정하여 사용자 닉네임을 지정할 수 있습니다.")
 
     def change_profile_and_spin(self, profile_index):
         """웹훅 요청 처리: 프로필 변경 후 룰렛 실행"""
@@ -1627,46 +1628,109 @@ class RouletteApp(QMainWindow):
                 
         except Exception as e:
             print(f"웹훅 전송 준비 오류: {e}")
-    
     def closeEvent(self, event):
         """창 닫힐 때 설정 저장"""
         self.save_profiles()
         super().closeEvent(event)
+def update_indicator(self, nickname):
+    if nickname:
+        self.indicator.setText(f"{nickname}")
+        # 폰트 및 스타일 설정 (선택사항)
+        font = QFont(self.current_profile.display.font_family, 14, QFont.Bold)
+        self.indicator.setFont(font)
+        self.indicator.setStyleSheet(f"color: {self.current_profile.display.text_color}; background-color: rgba(0, 0, 0, 100); padding: 5px; border-radius: 5px;")
+        self.indicator.setAlignment(Qt.AlignCenter)
+        # 지시자 표시
+        self.indicator.show()
+    else:
+        # 닉네임이 없으면 지시자 숨기기(선택사항)
+        self.indicator.hide()
+
 
 class RouletteHandler(BaseHTTPRequestHandler):
-    def do_POST(self):
-        # 경로에서 프로필 번호 추출 (예: /r1 -> 1, /r2 -> 2)
+    def extract_profile_and_params(self):
+        """URL에서 프로필 번호와 매개변수 추출"""
         import re
-        profile_match = re.match(r'/r(\d+)$', self.path)
+        from urllib.parse import urlparse, parse_qs
         
-        if profile_match:
-            profile_number = int(profile_match.group(1))
-            content_length = int(self.headers['Content-Length'])
-            post_data = self.rfile.read(content_length)
+        # URL 파싱 및 쿼리 매개변수 가져오기
+        parsed_url = urlparse(self.path)
+        query_params = parse_qs(parsed_url.query)
+        
+        # 경로에서 프로필 번호 추출 (예: /r1 -> 1)
+        profile_match = re.match(r'/r(\d+)', parsed_url.path)
+        profile_number = int(profile_match.group(1)) if profile_match else None
+        
+        return profile_number, query_params
+    
+    def do_GET(self):
+        try:
+            profile_number, query_params = self.extract_profile_and_params()
             
-            # 룰렛 시작 신호 보내기 (프로필 번호와 함께)
-            if hasattr(self.server, 'app') and self.server.app:
-                # 프로필 번호를 0-기반 인덱스로 변환 (-1)
-                profile_index = profile_number - 1
+            if profile_number is not None:
+                # 닉네임 파라미터 추출
+                nickname = query_params.get('nickname', [''])[0]
                 
-                # 요청을 큐에 추가
-                self.server.app.add_roulette_request(profile_index)
+                # 앱의 indicator 라벨 업데이트 및 룰렛 요청 추가
+                if hasattr(self.server, 'app') and self.server.app:
+                    profile_index = profile_number - 1
+                    self.server.app.update_indicator(nickname)
+                    self.server.app.add_roulette_request(profile_index)
+                
+                # 응답 전송
+                self.send_response(200)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                
+                response_data = {
+                    'status': 'success',
+                    'message': '요청이 처리되었습니다.',
+                    'nickname': nickname,
+                    'profile': profile_number
+                }
+                self.wfile.write(json.dumps(response_data).encode())
+            else:
+                self.send_error(404, "경로를 찾을 수 없습니다")
+        except Exception as e:
+            print(f"GET 요청 처리 중 오류: {e}")
+            self.send_error(500, str(e))
+    
+    def do_POST(self):
+        try:
+            profile_number, query_params = self.extract_profile_and_params()
             
-            # 응답 전송
-            self.send_response(200)
-            self.send_header('Content-type', 'application/json')
-            self.end_headers()
-            
-            # 요청 상태 정보를 응답에 포함
-            response_data = {
-                'status': 'success',
-                'message': '요청이 처리되었습니다.',
-                'queue_size': len(self.server.app.request_queue) if hasattr(self.server, 'app') else 0,
-                'user': '턴스튜디오'  # 사용자 정보 추가
-            }
-            self.wfile.write(json.dumps(response_data).encode())
-        else:
-            self.send_error(404, "Path not found")
+            if profile_number is not None:
+                # POST 데이터 처리
+                content_length = int(self.headers['Content-Length'])
+                post_data = self.rfile.read(content_length)
+                
+                # 닉네임 파라미터 추출
+                nickname = query_params.get('nickname', [''])[0]
+                
+                # 앱의 indicator 라벨 업데이트 및 룰렛 요청 추가
+                if hasattr(self.server, 'app') and self.server.app:
+                    profile_index = profile_number - 1
+                    self.server.app.update_indicator(nickname)
+                    self.server.app.add_roulette_request(profile_index)
+                
+                # 응답 전송
+                self.send_response(200)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                
+                response_data = {
+                    'status': 'success',
+                    'message': '요청이 처리되었습니다.',
+                    'nickname': nickname,
+                    'queue_size': len(self.server.app.request_queue) if hasattr(self.server, 'app') else 0,
+                    'user': '턴스튜디오'
+                }
+                self.wfile.write(json.dumps(response_data).encode())
+            else:
+                self.send_error(404, "경로를 찾을 수 없습니다")
+        except Exception as e:
+            print(f"POST 요청 처리 중 오류: {e}")
+            self.send_error(500, str(e))
     
     # 로그 출력 방지 (콘솔 깨끗하게 유지)
     def log_message(self, format, *args):
