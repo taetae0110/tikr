@@ -6,6 +6,7 @@ import json
 import threading
 import requests
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from urllib.parse import urlparse, parse_qs  # URL 쿼리 파라미터 처리용
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QLabel, QPushButton, 
                             QVBoxLayout, QHBoxLayout, QWidget, QFrame, QDialog,
                             QListWidget, QLineEdit, QFormLayout, QDoubleSpinBox,
@@ -53,6 +54,18 @@ DEFAULT_CONFIG_FILE = os.path.join(CONFIG_FOLDER, "profile_1.json")
 for folder in [CONFIG_FOLDER, IMAGE_FOLDER]:
     if not os.path.exists(folder):
         os.makedirs(folder)
+
+# 룰렛 요청 정보를 저장하는 클래스
+class RouletteRequest:
+    """룰렛 요청 정보를 저장하는 클래스"""
+    def __init__(self, profile_index, nickname=None):
+        self.profile_index = profile_index
+        self.nickname = nickname  # None이면 닉네임 없음
+        self.timestamp = time.time()
+    
+    def __str__(self):
+        nickname_display = self.nickname if self.nickname else "익명"
+        return f"요청: 프로필 {self.profile_index+1}, 닉네임: {nickname_display}"
 
 # 신호 클래스 정의 (스레드 간 통신용)
 class RouletteSignals(QObject):
@@ -544,7 +557,7 @@ class DisplaySettingsTab(QWidget):
         layout.addLayout(form_layout)
         layout.addLayout(preview_layout)
         layout.addStretch()
-
+    
     def choose_color(self):
         current_color = QColor(self.display_settings.text_color)
         color = QColorDialog.getColor(current_color, self, "텍스트 색상 선택")
@@ -737,12 +750,15 @@ class RouletteApp(QMainWindow):
         super().__init__()
         
         # 윈도우 설정
-        self.setWindowTitle("룰렛 게임")
+        self.setWindowTitle("자동룰렛 madeby 턴스튜디오")
         self.setFixedSize(800, 600)
         
-        # 투명 배경 설정
+        # 초기 상태: 투명 배경, 타이틀 바 없음
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setWindowFlags(Qt.FramelessWindowHint)
+        
+        # 타이틀바 상태 변수
+        self.titlebar_visible = False
         
         # 애니메이션 상태 변수 초기화
         self.animation_active = False
@@ -809,7 +825,7 @@ class RouletteApp(QMainWindow):
 
         profile_layout.addWidget(self.add_profile_button)
         profile_layout.addWidget(self.rename_profile_button)
-        profile_layout.addWidget(self.copy_link_button)  # 버튼 추가
+        profile_layout.addWidget(self.copy_link_button)
         profile_layout.addWidget(self.delete_profile_button)
         profile_layout.addStretch()
         
@@ -850,9 +866,17 @@ class RouletteApp(QMainWindow):
         self.settings_button.setFixedSize(120, 40)
         button_layout.addWidget(self.settings_button)
         
+        # 타이틀바 토글 버튼 추가
+        self.toggle_titlebar_button = QPushButton("오버레이화 해제")
+        self.toggle_titlebar_button.setFont(QFont("Arial", 10))
+        self.toggle_titlebar_button.setStyleSheet("background-color: #9b59b6; color: white; padding: 8px;")
+        self.toggle_titlebar_button.clicked.connect(self.toggle_titlebar)
+        self.toggle_titlebar_button.setFixedSize(120, 40)
+        button_layout.addWidget(self.toggle_titlebar_button)
+        
         button_layout.addStretch()
         
-        # 종료 버튼 추가
+        # 종료 버튼 - 타이틀바 없을 때 필요
         self.exit_button = QPushButton("X")
         self.exit_button.setFixedSize(30, 30)
         self.exit_button.setStyleSheet("background-color: #e74c3c; color: white;")
@@ -877,29 +901,22 @@ class RouletteApp(QMainWindow):
         
         # 마우스 드래그 이벤트를 위한 변수
         self.drag_position = None
-    def hide_elements(self):
-        """룰렛 프레임과 인디케이터를 함께 숨김"""
-        try:
-            # 룰렛 프레임 숨기기
-            self.roulette_frame.hide()
-            
-            # 인디케이터 텍스트 지우기 및 숨기기
-            self.indicator.setText("")
-            self.indicator.hide()
-            
-            print("룰렛 종료: 모든 요소가 숨겨졌습니다.")
-        except Exception as e:
-            print(f"요소 숨기기 오류: {e}")
+        
+        # 닉네임 추적
+        self._last_nickname = None
+
     def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton:
+    # 타이틀바가 없을 때만 드래그 기능 활성화
+        if not self.titlebar_visible and event.button() == Qt.LeftButton:
             self.drag_position = event.globalPos() - self.frameGeometry().topLeft()
             event.accept()
-    
+
     def mouseMoveEvent(self, event):
-        if event.buttons() == Qt.LeftButton and self.drag_position:
+        # 타이틀바가 없을 때만 드래그 기능 활성화
+        if not self.titlebar_visible and event.buttons() == Qt.LeftButton and self.drag_position:
             self.move(event.globalPos() - self.drag_position)
             event.accept()
-    
+
     def mouseReleaseEvent(self, event):
         self.drag_position = None
     
@@ -914,6 +931,78 @@ class RouletteApp(QMainWindow):
             self.profile_combo.setCurrentIndex(self.current_profile_index)
         self.profile_combo.blockSignals(False)
     
+    def update_indicator(self, nickname):
+        """닉네임 정보를 indicator 라벨에 표시"""
+        try:
+            # 닉네임이 실제로 의미 있는 값인 경우에만 표시
+            if nickname and nickname.strip():
+                # 현재 폰트 및 색상 설정 적용
+                font = QFont(self.current_profile.display.font_family, 14, QFont.Bold)
+                self.indicator.setFont(font)
+                
+                # 닉네임 설정 및 배경 스타일
+                self.indicator.setText(f"{nickname}")
+                self.indicator.setStyleSheet(
+                    f"color: {self.current_profile.display.text_color}; "
+                    f"background-color: rgba(0, 0, 0, 100); "
+                    f"padding: 5px; border-radius: 5px; "
+                    f"border: 2px solid #3498db;"
+                )
+                self.indicator.setAlignment(Qt.AlignCenter)
+                
+                # 표시 효과
+                self.indicator.show()
+                print(f"인디케이터 업데이트: {nickname}")
+                
+                # 현재 닉네임 저장
+                self._last_nickname = nickname
+            else:
+                # 닉네임이 없거나 공백만 있으면 숨김
+                self.indicator.setText("")
+                self.indicator.hide()
+                print("닉네임이 없어 인디케이터를 숨깁니다.")
+                self._last_nickname = None
+        except Exception as e:
+            print(f"인디케이터 업데이트 오류: {e}")
+    def toggle_titlebar(self):
+        """타이틀바 표시/숨김을 토글하는 메서드"""
+        try:
+            # 현재 위치 저장
+            current_pos = self.pos()
+            
+            # 윈도우 상태 토글
+            self.titlebar_visible = not self.titlebar_visible
+            
+            if self.titlebar_visible:
+                # 타이틀바 표시
+                self.setWindowFlags(self.windowFlags() & ~Qt.FramelessWindowHint)
+                self.toggle_titlebar_button.setText("오버레이화")
+                self.exit_button.hide()  # 시스템 종료 버튼이 있으므로 숨김
+            else:
+                # 타이틀바 숨김
+                self.setWindowFlags(self.windowFlags() | Qt.FramelessWindowHint)
+                self.toggle_titlebar_button.setText("오버레이화 해제")
+                self.exit_button.show()  # 종료 버튼이 필요하므로 표시
+            
+            # 변경사항 적용 및 위치 복원
+            self.show()
+            self.move(current_pos)
+            
+            print(f"타이틀바 상태 변경: {'표시' if self.titlebar_visible else '숨김'}")
+            
+        except Exception as e:
+            print(f"타이틀바 토글 오류: {e}")
+    def hide_elements(self):
+        """룰렛 프레임과 인디케이터를 함께 숨김"""
+        try:
+            self.roulette_frame.hide()
+            self.indicator.setText("")
+            self.indicator.hide()
+            
+            print("룰렛 종료: 모든 요소가 숨겨졌습니다.")
+        except Exception as e:
+            print(f"요소 숨기기 오류: {e}")
+
     def load_profiles(self):
         profiles = []
         try:
@@ -1135,7 +1224,6 @@ class RouletteApp(QMainWindow):
             else:
                 # 이미지 모드
                 img_label = QLabel()
-                img_label.setFixedSize(item_width, item_height)
                 img_label.setAlignment(Qt.AlignCenter)
                 
                 if os.path.exists(item.image_path):
@@ -1158,6 +1246,9 @@ class RouletteApp(QMainWindow):
             name_label.setFont(QFont(font_family, adjusted_name_size))
             name_label.setWordWrap(True)
             name_label.setFixedWidth(item_width)
+
+            # 중요: 레이블을 레이아웃에 추가할 때 가운데 정렬 설정
+
             
             # 배율 라벨
             multiplier_label = QLabel(getattr(item, 'multiplier', 'X1'))
@@ -1165,8 +1256,8 @@ class RouletteApp(QMainWindow):
             multiplier_label.setStyleSheet(f"color: #FF6B6B; background-color: transparent; font-weight: bold;")
             multiplier_label.setFont(QFont(font_family, adjusted_title_size, QFont.Bold))
             
-            # 레이아웃에 추가
             item_layout.addWidget(name_label)
+            item_layout.setAlignment(name_label, Qt.AlignHCenter)  # 레이블을 수평 가운데 정렬
             item_layout.addWidget(multiplier_label)
             
             self.item_widgets.append(item_widget)
@@ -1187,7 +1278,7 @@ class RouletteApp(QMainWindow):
         if self.animation_active:
             print("이미 애니메이션 실행 중, 요청은 큐에 있습니다.")
             return
-                
+             
         if not self.current_profile.items:
             print("항목이 없습니다")
             # 큐의 요청을 처리
@@ -1365,6 +1456,7 @@ class RouletteApp(QMainWindow):
         except Exception as e:
             print(f"UI 업데이트 오류: {e}")
             QApplication.restoreOverrideCursor()
+            
     def finish_roulette(self, selected_index):
         """룰렛 애니메이션 종료 및 결과 처리"""
         if selected_index < 0:
@@ -1421,40 +1513,12 @@ class RouletteApp(QMainWindow):
             print(f"다음 요청 준비 중... (남은 요청: {len(self.request_queue)})")
             QTimer.singleShot(1000, self.process_next_request)
         else:
-            # 다음 요청이 없을 때만 3초 후 룰렛 프레임 숨기기
-            QTimer.singleShot(3000, lambda: self.hide_elements())
+            # 다음 요청이 없을 때만 3초 후 룰렛 프레임과 인디케이터 숨기기
+            QTimer.singleShot(2000, self.hide_elements)
 
-    def update_indicator(self, nickname):
-        """닉네임 정보를 indicator 라벨에 표시"""
-        try:
-            # 닉네임이 실제로 의미 있는 값인 경우에만 표시
-            if nickname and nickname.strip():
-                # 현재 폰트 및 색상 설정 적용
-                font = QFont(self.current_profile.display.font_family, 14, QFont.Bold)
-                self.indicator.setFont(font)
-                
-                # 닉네임 설정 및 배경 스타일
-                self.indicator.setText(f"{nickname}")
-                self.indicator.setStyleSheet(
-                    f"color: {self.current_profile.display.text_color}; "
-                    f"background-color: rgba(0, 0, 0, 100); "
-                    f"padding: 5px; border-radius: 5px; "
-                    f"border: 2px solid #3498db;"
-                )
-                self.indicator.setAlignment(Qt.AlignCenter)
-                
-                # 표시 효과
-                self.indicator.show()
-                print(f"인디케이터 업데이트: {nickname}")
-            else:
-                # 닉네임이 없거나 공백만 있으면 숨김
-                self.indicator.setText("")
-                self.indicator.hide()
-                print("닉네임이 없어 인디케이터를 숨깁니다.")
-        except Exception as e:
-            print(f"인디케이터 업데이트 오류: {e}")
     def copy_profile_link(self):
-        # 현재 프로필 인덱스 가져오기
+        """프로필 링크 복사 (닉네임 매개변수 포함)"""
+        # 현재 프로필 인덱스 가져오기 (1-기반 번호로 변환 +1)
         profile_number = self.current_profile_index + 1
         
         # 현재 호스트와 포트 가져오기
@@ -1470,22 +1534,13 @@ class RouletteApp(QMainWindow):
         
         # 사용자에게 알림
         QMessageBox.information(self, "링크 복사", 
-                            f"프로필 '{self.current_profile.name}'의 URL이 클립보드에 복사되었습니다:\n{url}\n\n"
-                            f"이 URL에서 'nickname=' 부분을 수정하여 사용자 닉네임을 지정할 수 있습니다.")
-
-    def change_profile_and_spin(self, profile_index):
-        """웹훅 요청 처리: 프로필 변경 후 룰렛 실행"""
-        # 요청을 큐에 추가
-        self.add_roulette_request(profile_index)
+                             f"프로필 '{self.current_profile.name}'의 URL이 클립보드에 복사되었습니다:\n{url}\n\n"
+                             f"이 URL에서 'nickname=' 부분을 수정하여 사용자 닉네임을 지정할 수 있습니다.")
 
     def add_roulette_request(self, profile_index, nickname=None):
         """룰렛 요청을 큐에 추가하고 처리"""
         # 최대 큐 크기 제한
         MAX_QUEUE_SIZE = 15
-        
-        # nickname이 None이거나 빈 문자열이면 빈 문자열로 설정
-        if not nickname:
-            nickname = ""
         
         # 요청 객체 생성
         request = RouletteRequest(profile_index, nickname)
@@ -1499,7 +1554,7 @@ class RouletteApp(QMainWindow):
         self.request_queue.append(request)
         queue_size = len(self.request_queue)
         
-        # 닉네임이 있으면 로그에 표시, 없으면 "없음" 대신 "익명" 표시
+        # 닉네임이 있으면 로그에 표시, 없으면 익명으로 표시
         nickname_display = nickname if nickname else "익명"
         print(f"룰렛 요청 추가: 프로필 {profile_index+1}, 닉네임: {nickname_display}, 대기 중인 요청: {queue_size}")
         
@@ -1512,7 +1567,7 @@ class RouletteApp(QMainWindow):
             self.process_next_request()
     
     def process_next_request(self):
-        """큐에서 다음 룰렛 요청을 처리"""
+        """큐에서 다음 룰렛 요청을 처리 (같은 사용자의 요청은 연속해서)"""
         if not self.request_queue:
             print("처리할 요청이 없습니다.")
             return
@@ -1522,10 +1577,28 @@ class RouletteApp(QMainWindow):
             QTimer.singleShot(3000, self.process_next_request)
             return
         
-        # 큐에서 첫 번째 요청 가져오기
-        profile_index = self.request_queue.pop(0)
+        # 직전 요청의 닉네임 기억 (연속성 처리용)
+        previous_nickname = self._last_nickname
         
-        # 해당 프로필로 변경 (UI 업데이트 최소화)
+        # 같은 사용자의 요청을 찾아서 우선 처리
+        next_index = 0
+        if previous_nickname:
+            for i, req in enumerate(self.request_queue):
+                if req.nickname == previous_nickname:
+                    next_index = i
+                    break
+        
+        # 선택된 요청 가져오기
+        next_request = self.request_queue.pop(next_index)
+        
+        profile_index = next_request.profile_index
+        nickname = next_request.nickname
+        
+        # 닉네임이 있으면 로그에 표시, 없으면 '익명'으로 표시
+        nickname_display = nickname if nickname else "익명"
+        print(f"처리 중인 요청: 프로필 {profile_index+1}, 닉네임: {nickname_display}")
+        
+        # 해당 프로필로 변경
         if 0 <= profile_index < len(self.profiles):
             if profile_index != self.current_profile_index:
                 self.current_profile_index = profile_index
@@ -1533,12 +1606,15 @@ class RouletteApp(QMainWindow):
                 self.profile_combo.setCurrentIndex(profile_index)
                 self.update_roulette_items()
         
+        # 닉네임 표시
+        self.update_indicator(nickname)
+        
         # 룰렛 프레임이 숨겨져 있으면 표시
         if not self.roulette_frame.isVisible():
             self.roulette_frame.show()
         
-        # 룰렛 시작 (딜레이 없이)
-        self.spin_roulette()    
+        # 룰렛 시작
+        self.spin_roulette()
 
     def execute_mcrcon_command(self, command):
         """MCRCON 명령어 실행 (배율에 따라 반복 실행)"""
@@ -1635,6 +1711,14 @@ class RouletteApp(QMainWindow):
                             ]
                         }
                         
+                        # 현재 요청한 사용자의 닉네임이 있으면 추가
+                        if self._last_nickname:
+                            payload["embeds"][0]["fields"].append({
+                                "name": "요청자",
+                                "value": self._last_nickname,
+                                "inline": True
+                            })
+                        
                         # 명령어가 있다면 추가
                         if item.command:
                             payload["embeds"][0]["fields"].append({
@@ -1672,22 +1756,12 @@ class RouletteApp(QMainWindow):
                 
         except Exception as e:
             print(f"웹훅 전송 준비 오류: {e}")
+    
     def closeEvent(self, event):
         """창 닫힐 때 설정 저장"""
         self.save_profiles()
         super().closeEvent(event)
 
-
-class RouletteRequest:
-    """룰렛 요청 정보를 저장하는 클래스"""
-    def __init__(self, profile_index, nickname=""):
-        self.profile_index = profile_index
-        self.nickname = nickname or ""  # None이면 빈 문자열로
-        self.timestamp = time.time()
-    
-    def __str__(self):
-        nickname_display = self.nickname if self.nickname else "익명"
-        return f"요청: 프로필 {self.profile_index+1}, 닉네임: {nickname_display}"
 class RouletteHandler(BaseHTTPRequestHandler):
     def extract_profile_and_params(self):
         """URL에서 프로필 번호와 쿼리 파라미터 추출"""
@@ -1698,28 +1772,24 @@ class RouletteHandler(BaseHTTPRequestHandler):
         parsed_url = urlparse(self.path)
         query_params = parse_qs(parsed_url.query)
         
-        # 프로필 번호 추출 (예: /r1 -> 1)
+        # 경로에서 프로필 번호 추출 (예: /r1 -> 1)
         profile_match = re.match(r'/r(\d+)', parsed_url.path)
         profile_number = int(profile_match.group(1)) if profile_match else None
         
         return profile_number, query_params
-
+    
     def do_GET(self):
         try:
             profile_number, query_params = self.extract_profile_and_params()
             
             if profile_number is not None:
                 # 닉네임 파라미터 추출 - 빈 문자열이면 None으로 처리
-                nickname = query_params.get('nickname', [None])[0]
-                if nickname == "":  # 명시적으로 빈 문자열 체크
-                    nickname = None
+                nickname = query_params.get('nickname', [''])[0] or None
                 
                 if hasattr(self.server, 'app') and self.server.app:
                     profile_index = profile_number - 1
                     # 룰렛 요청 추가 (닉네임 포함)
                     self.server.app.add_roulette_request(profile_index, nickname)
-                    self.server.app.update_indicator(nickname)
-                    self.server.app.add_roulette_request(profile_index)
                 
                 self.send_response(200)
                 self.send_header('Content-type', 'application/json')
@@ -1728,9 +1798,9 @@ class RouletteHandler(BaseHTTPRequestHandler):
                 response_data = {
                     'status': 'success',
                     'message': '요청이 처리되었습니다.',
-                    'nickname': nickname
+                    'nickname': nickname or '익명'
                 }
-                self.wfile.write(json.dumps(response_data).encode())
+                self.wfile.write(json.dumps(response_data, ensure_ascii=False).encode('utf-8'))
             else:
                 self.send_error(404, "경로를 찾을 수 없습니다")
         except Exception as e:
@@ -1745,14 +1815,13 @@ class RouletteHandler(BaseHTTPRequestHandler):
                 content_length = int(self.headers['Content-Length'])
                 post_data = self.rfile.read(content_length)
                 
-                # 닉네임 파라미터 추출
-                nickname = query_params.get('nickname', [''])[0]
+                # 닉네임 파라미터 추출 - 빈 문자열이면 None으로 처리
+                nickname = query_params.get('nickname', [''])[0] or None
                 
                 if hasattr(self.server, 'app') and self.server.app:
                     profile_index = profile_number - 1
-                    # 먼저 인디케이터 업데이트 후 룰렛 요청 추가
-                    self.server.app.update_indicator(nickname)
-                    self.server.app.add_roulette_request(profile_index)
+                    # 룰렛 요청 추가 (닉네임 포함)
+                    self.server.app.add_roulette_request(profile_index, nickname)
                 
                 self.send_response(200)
                 self.send_header('Content-type', 'application/json')
@@ -1761,10 +1830,10 @@ class RouletteHandler(BaseHTTPRequestHandler):
                 response_data = {
                     'status': 'success',
                     'message': '요청이 처리되었습니다.',
-                    'nickname': nickname,
+                    'nickname': nickname or '익명',
                     'queue_size': len(self.server.app.request_queue) if hasattr(self.server, 'app') else 0
                 }
-                self.wfile.write(json.dumps(response_data).encode())
+                self.wfile.write(json.dumps(response_data, ensure_ascii=False).encode('utf-8'))
             else:
                 self.send_error(404, "경로를 찾을 수 없습니다")
         except Exception as e:
@@ -1787,6 +1856,7 @@ def start_server(app):
         for i in range(profile_count):
             profile_name = app.profiles[i].name
             print(f"프로필 {i+1} ({profile_name}): http://127.0.0.1:8080/r{i+1}")
+            print(f"닉네임 지정: http://127.0.0.1:8080/r{i+1}?nickname=사용자이름")
             
         server.serve_forever()
     except OSError as e:
@@ -1796,12 +1866,14 @@ def start_server(app):
 def main():
     app = QApplication(sys.argv)
     
+    # QTimer import 누락 방지
+    from PyQt5.QtCore import QTimer
+    
     # 스타일 설정
     app.setStyle('Fusion')
     
     # 디버깅 메시지 출력
     print("룰렛 애플리케이션 시작 중...")
-    
     
     # 메인 윈도우 생성
     window = RouletteApp()
