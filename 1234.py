@@ -2120,7 +2120,7 @@ class RouletteApp(QMainWindow):
         port = 8080
         
         # URL 생성 (닉네임 매개변수 포함)
-        url = f"http://{host}:{port}/r{profile_number}?nickname=사용자닉네임"
+        url = f"http://{host}:{port}/r{profile_number}?nickname={{nickname}}"
         
         # 클립보드에 URL 복사
         clipboard = QApplication.clipboard()
