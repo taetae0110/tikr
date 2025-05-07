@@ -161,12 +161,13 @@ class WebhookSettings:
 # 폰트 및 표시 설정 클래스
 class DisplaySettings:
     def __init__(self, font_family="Arial", font_size=12, text_color="#ffffff", 
-                 use_text_mode=False, title_font_size=16):
+                 use_text_mode=False, title_font_size=16, fixed_slot_count=0):
         self.font_family = font_family
         self.font_size = font_size
         self.text_color = text_color
         self.use_text_mode = use_text_mode
         self.title_font_size = title_font_size
+        self.fixed_slot_count = fixed_slot_count  # 0 = 자동, 그 외 = 고정 슬롯 수
     
     def to_dict(self):
         return {
@@ -174,7 +175,8 @@ class DisplaySettings:
             'font_size': self.font_size,
             'text_color': self.text_color,
             'use_text_mode': self.use_text_mode,
-            'title_font_size': self.title_font_size
+            'title_font_size': self.title_font_size,
+            'fixed_slot_count': self.fixed_slot_count
         }
     
     @staticmethod
@@ -184,7 +186,8 @@ class DisplaySettings:
             font_size=data.get('font_size', 12),
             text_color=data.get('text_color', '#ffffff'),
             use_text_mode=data.get('use_text_mode', False),
-            title_font_size=data.get('title_font_size', 16)
+            title_font_size=data.get('title_font_size', 16),
+            fixed_slot_count=data.get('fixed_slot_count', 0)
         )
 
 # 프로필 클래스
@@ -496,6 +499,14 @@ class DisplaySettingsTab(QWidget):
         self.text_mode_check.setChecked(self.display_settings.use_text_mode)
         form_layout.addRow("", self.text_mode_check)
         
+        # 고정 슬롯 수 설정 추가
+        self.fixed_slot_spin = QSpinBox()
+        self.fixed_slot_spin.setRange(0, 12)  # 0은 자동, 1~12는 고정 수
+        self.fixed_slot_spin.setValue(self.display_settings.fixed_slot_count)
+        self.fixed_slot_spin.setSpecialValueText("자동")  # 0일 때는 "자동"으로 표시
+        self.fixed_slot_spin.setToolTip("표시할 슬롯의 수를 설정합니다. '자동'은 모든 항목을 표시하고, 숫자는 항상 고정된 수의 슬롯을 표시합니다.")
+        form_layout.addRow("표시 슬롯 수:", self.fixed_slot_spin)
+        
         # 폰트 선택
         self.font_combo = QFontComboBox()
         self.font_combo.setCurrentFont(QFont(self.display_settings.font_family))
@@ -590,6 +601,7 @@ class DisplaySettingsTab(QWidget):
         self.display_settings.font_size = self.font_size_spin.value()
         self.display_settings.title_font_size = self.title_font_size_spin.value()
         self.display_settings.use_text_mode = self.text_mode_check.isChecked()
+        self.display_settings.fixed_slot_count = self.fixed_slot_spin.value()  # 고정 슬롯 수 저장
         # text_color는 choose_color 메서드에서 이미 업데이트됨
         return self.display_settings
 
@@ -764,6 +776,9 @@ class RouletteApp(QMainWindow):
         self.animation_active = False
         self.selected_index = 0  # 선택된 항목의 인덱스
         
+        # 숨김 타이머 변수 추가
+        self.hide_timer = None  # 요소 숨기기 타이머
+        
         # 프로필 관리
         self.profiles = self.load_profiles()
         self.current_profile_index = 0  # 현재 사용 중인 프로필 인덱스
@@ -845,6 +860,14 @@ class RouletteApp(QMainWindow):
         
         # 룰렛 프레임을 메인 레이아웃에 추가
         main_layout.addWidget(self.roulette_frame)
+        
+        # 플레이스홀더 추가 (버튼 위치 고정용)
+        self.placeholder_spacer = QFrame()
+        self.placeholder_spacer.setFrameStyle(QFrame.NoFrame)
+        self.placeholder_spacer.setStyleSheet("background-color: transparent;")
+        self.placeholder_spacer.setMinimumHeight(200)  # 룰렛 프레임과 비슷한 높이로 설정
+        main_layout.addWidget(self.placeholder_spacer)
+        self.placeholder_spacer.hide()  # 초기에 숨김
         
         # 이미지 라벨 컨테이너
         self.item_widgets = []
@@ -992,14 +1015,18 @@ class RouletteApp(QMainWindow):
             
         except Exception as e:
             print(f"타이틀바 토글 오류: {e}")
+    
     def hide_elements(self):
-        """룰렛 프레임과 인디케이터를 함께 숨김"""
+        """룰렛 프레임과 인디케이터를 숨기고 플레이스홀더를 표시"""
         try:
             self.roulette_frame.hide()
             self.indicator.setText("")
             self.indicator.hide()
             
-            print("룰렛 종료: 모든 요소가 숨겨졌습니다.")
+            # 플레이스홀더 표시
+            self.placeholder_spacer.show()
+            
+            print("룰렛 종료: 요소가 숨겨지고 플레이스홀더가 표시되었습니다.")
         except Exception as e:
             print(f"요소 숨기기 오류: {e}")
 
@@ -1158,8 +1185,12 @@ class RouletteApp(QMainWindow):
             
             if item_count == 0:
                 self.roulette_frame.hide()
+                self.placeholder_spacer.show()  # 플레이스홀더 표시
                 print("항목이 없어 룰렛 프레임을 숨깁니다.")
                 return
+            
+            # 플레이스홀더는 숨김
+            self.placeholder_spacer.hide()
             
             # 현재 표시 설정 가져오기
             display = self.current_profile.display
@@ -1178,14 +1209,27 @@ class RouletteApp(QMainWindow):
         except Exception as e:
             print(f"룰렛 아이템 업데이트 오류: {e}")
 
-    # 아이템 생성 메서드 - 성능 최적화를 위해 별도 메서드로 분리
+    # 아이템 생성 메서드 - 고정 슬롯 수 지원 추가
     def create_roulette_items(self, item_count, available_width, display):
+        # 고정 슬롯 수 확인
+        fixed_slot_count = display.fixed_slot_count
+        
         # 최소/최대 항목 너비 설정
         max_item_width = 150
         min_item_width = 80
         
         # 항목 수에 따른 크기 계산 (최소 너비 보장)
-        item_width = max(min(available_width // item_count, max_item_width), min_item_width)
+        if fixed_slot_count > 0:
+            # 고정 슬롯 수 사용
+            display_count = min(fixed_slot_count, item_count)
+            item_width = max(min(available_width // fixed_slot_count, max_item_width), min_item_width)
+            print(f"고정 슬롯 수 사용: {fixed_slot_count}개 슬롯")
+        else:
+            # 자동 (모든 항목 표시)
+            display_count = item_count
+            item_width = max(min(available_width // item_count, max_item_width), min_item_width)
+            print(f"자동 슬롯 수 사용: {item_count}개 항목 모두 표시")
+            
         item_height = item_width  # 정사각형 비율 유지
         
         # 폰트 설정
@@ -1202,8 +1246,25 @@ class RouletteApp(QMainWindow):
         
         print(f"항목 자동 크기 조정: {item_width}x{item_height}, 폰트: {adjusted_font_size}pt")
         
+        # 표시할 항목 선택
+        if fixed_slot_count > 0 and fixed_slot_count < item_count:
+            # 고정 슬롯 수가 있고, 아이템 수가 그보다 많으면 선택적으로 표시
+            center_idx = len(self.selected_items) // 2
+            start_idx = max(0, center_idx - (fixed_slot_count // 2))
+            end_idx = start_idx + fixed_slot_count
+            
+            if end_idx > len(self.selected_items):
+                end_idx = len(self.selected_items)
+                start_idx = max(0, end_idx - fixed_slot_count)
+                
+            display_items = self.selected_items[start_idx:end_idx]
+            print(f"슬롯 제한으로 {len(display_items)}개 항목만 표시 (전체 {item_count}개 중)")
+        else:
+            # 자동 모드이거나 아이템 수가 충분하지 않으면 모두 표시
+            display_items = self.selected_items
+        
         # 항목 위젯 생성
-        for i, item in enumerate(self.selected_items):
+        for i, item in enumerate(display_items):
             # 수직 레이아웃 컨테이너
             item_widget = QFrame()
             item_widget.setFrameStyle(QFrame.Box)
@@ -1246,9 +1307,6 @@ class RouletteApp(QMainWindow):
             name_label.setFont(QFont(font_family, adjusted_name_size))
             name_label.setWordWrap(True)
             name_label.setFixedWidth(item_width)
-
-            # 중요: 레이블을 레이아웃에 추가할 때 가운데 정렬 설정
-
             
             # 배율 라벨
             multiplier_label = QLabel(getattr(item, 'multiplier', 'X1'))
@@ -1278,7 +1336,13 @@ class RouletteApp(QMainWindow):
         if self.animation_active:
             print("이미 애니메이션 실행 중, 요청은 큐에 있습니다.")
             return
-             
+        
+        # 만약 숨김 타이머가 활성화 상태라면 취소
+        if self.hide_timer is not None and self.hide_timer.isActive():
+            print("요소 숨기기 타이머 취소됨 - 수동 룰렛 실행")
+            self.hide_timer.stop()
+            self.hide_timer = None
+    
         if not self.current_profile.items:
             print("항목이 없습니다")
             # 큐의 요청을 처리
@@ -1288,7 +1352,7 @@ class RouletteApp(QMainWindow):
                 if self.request_queue:
                     QTimer.singleShot(100, self.process_next_request)
             return
-                    
+                
         print("룰렛 회전 시작")
         
         # 룰렛 프레임이 숨겨져 있으면 표시
@@ -1296,6 +1360,7 @@ class RouletteApp(QMainWindow):
             # 최신 항목으로 업데이트
             self.update_roulette_items()  
             self.roulette_frame.show()
+            self.placeholder_spacer.hide()  # 플레이스홀더 숨김
         
         # 룰렛이 시작되기 전에 화면 업데이트
         for widget in self.item_widgets:
@@ -1403,11 +1468,28 @@ class RouletteApp(QMainWindow):
             font_size = display.font_size
             text_color = display.text_color
             use_text_mode = display.use_text_mode
+            fixed_slot_count = display.fixed_slot_count
+            
+            # 고정 슬롯 수가 설정된 경우, 표시할 항목 선택
+            if fixed_slot_count > 0 and fixed_slot_count < len(items):
+                # 선택된 항목 중심으로 표시 항목 결정
+                center_idx = len(items) // 2
+                start_idx = max(0, center_idx - (fixed_slot_count // 2))
+                end_idx = start_idx + fixed_slot_count
+                
+                if end_idx > len(items):
+                    end_idx = len(items)
+                    start_idx = max(0, end_idx - fixed_slot_count)
+                
+                display_items = items[start_idx:end_idx]
+            else:
+                display_items = items
             
             # 업데이트 전에 UI 이벤트 처리 일시 중지
             QApplication.setOverrideCursor(Qt.WaitCursor)
             
-            for i, (widget, item) in enumerate(zip(self.item_widgets, items)):
+            # 위젯과 표시 항목의 수가 다를 수 있으므로 최소값 사용
+            for i, (widget, item) in enumerate(zip(self.item_widgets, display_items)):
                 # 위젯의 자식 찾기 (첫 번째만)
                 layout = widget.layout()
                 if not layout or layout.count() == 0:
@@ -1465,6 +1547,7 @@ class RouletteApp(QMainWindow):
             self.settings_button.setEnabled(True)
             self.animation_active = False
             self.roulette_frame.hide()
+            self.placeholder_spacer.show()  # 플레이스홀더 표시
             return
                 
         # 선택된 인덱스 저장
@@ -1482,9 +1565,23 @@ class RouletteApp(QMainWindow):
         self.update_roulette_display(final_items)
         
         # 결과 알림 효과
-        selected_widget = self.item_widgets[center_idx]
-        selected_widget.setStyleSheet("background-color: rgba(100, 150, 100, 200); border: 3px solid gold;")
-        selected_widget.update()
+        fixed_slot_count = self.current_profile.display.fixed_slot_count
+        if fixed_slot_count > 0 and fixed_slot_count < len(self.selected_items):
+            # 고정 슬롯 모드에서는 항상 중앙 위젯이 선택됨
+            center_widget_idx = fixed_slot_count // 2
+            if center_widget_idx < len(self.item_widgets):
+                selected_widget = self.item_widgets[center_widget_idx]
+            else:
+                selected_widget = self.item_widgets[0] if self.item_widgets else None
+        else:
+            # 모든 항목 표시 모드에서는 선택된 항목의 인덱스 사용
+            center_idx = len(self.selected_items) // 2
+            selected_idx = (selected_index - center_idx) % len(self.item_widgets)
+            selected_widget = self.item_widgets[selected_idx] if 0 <= selected_idx < len(self.item_widgets) else None
+        
+        if selected_widget:
+            selected_widget.setStyleSheet("background-color: rgba(100, 150, 100, 200); border: 3px solid gold;")
+            selected_widget.update()
         
         # 선택된 항목 처리
         selected_item = self.selected_items[selected_index]
@@ -1513,8 +1610,18 @@ class RouletteApp(QMainWindow):
             print(f"다음 요청 준비 중... (남은 요청: {len(self.request_queue)})")
             QTimer.singleShot(1000, self.process_next_request)
         else:
-            # 다음 요청이 없을 때만 3초 후 룰렛 프레임과 인디케이터 숨기기
-            QTimer.singleShot(2000, self.hide_elements)
+            # 다음 요청이 없을 때만 4초 후 룰렛 프레임과 인디케이터 숨기기
+            if self.hide_timer is not None:
+                # 기존에 예약된 타이머가 있다면 취소
+                self.hide_timer.stop()
+                self.hide_timer = None
+            
+            # 새로운 타이머 설정 (4초)
+            self.hide_timer = QTimer()
+            self.hide_timer.setSingleShot(True)
+            self.hide_timer.timeout.connect(self.hide_elements)
+            self.hide_timer.start(4000)  # 4초로 변경
+            print("4초 후 요소를 숨기도록 예약됨")
 
     def copy_profile_link(self):
         """프로필 링크 복사 (닉네임 매개변수 포함)"""
@@ -1541,6 +1648,12 @@ class RouletteApp(QMainWindow):
         """룰렛 요청을 큐에 추가하고 처리"""
         # 최대 큐 크기 제한
         MAX_QUEUE_SIZE = 15
+        
+        # 만약 숨김 타이머가 활성화 상태라면 취소
+        if self.hide_timer is not None and self.hide_timer.isActive():
+            print("요소 숨기기 타이머 취소됨 - 새 요청 감지")
+            self.hide_timer.stop()
+            self.hide_timer = None
         
         # 요청 객체 생성
         request = RouletteRequest(profile_index, nickname)
@@ -1612,6 +1725,7 @@ class RouletteApp(QMainWindow):
         # 룰렛 프레임이 숨겨져 있으면 표시
         if not self.roulette_frame.isVisible():
             self.roulette_frame.show()
+            self.placeholder_spacer.hide()  # 플레이스홀더 숨김
         
         # 룰렛 시작
         self.spin_roulette()
