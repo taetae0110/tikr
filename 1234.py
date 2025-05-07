@@ -14,7 +14,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QLabel, QPushButton,
                             QGridLayout, QGroupBox, QSpinBox, QComboBox, QInputDialog,
                             QFontComboBox, QColorDialog, QCheckBox, QTextEdit)
 from PyQt5.QtGui import QPixmap, QFont, QPalette, QBrush, QImage, QIcon, QColor
-from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QObject, QSize, QUrl, pyqtSlot, QMetaObject, Q_ARG
+from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QObject, QSize, QUrl
 from PyQt5.QtMultimedia import QMediaPlayer, QMediaContent  # 소리 재생용 추가
 
 # mcrcon 라이브러리 가져오기 (설치 필요: pip install mcrcon)
@@ -55,8 +55,6 @@ DEFAULT_SOUND_URL = "https://cdn.dpvm.xyz/sound.mp3"  # 기본 소리 URL
 DEFAULT_SOUND_FILE = os.path.join(SOUND_FOLDER, "default_sound.mp3")  # 기본 소리 파일 경로
 DEFAULT_TICK_SOUND_URL = "https://docs.google.com/uc?export=download&id=15No95c9IjxJCbP_2xx6UKRY3uhNbyCPZ"  # 기본 틱 소리 URL (없으면 생성해야 함)
 DEFAULT_TICK_SOUND_FILE = os.path.join(SOUND_FOLDER, "tick.mp3")  # 기본 틱 소리 파일 경로
-WATERMARK_URL = "https://docs.google.com/uc?export=download&id=1ZLKjK_Qq92cV5J5don7DY_pKgRFAZqXW"  # 워터마크 URL
-WATERMARK_FILE = os.path.join(IMAGE_FOLDER, "turnstudio.png")  # 워터마크 파일 경로
 
 # 폴더가 없으면 생성
 for folder in [CONFIG_FOLDER, IMAGE_FOLDER, SOUND_FOLDER]:
@@ -621,7 +619,6 @@ class SoundSettingsTab(QWidget):
         layout.addWidget(help_label)
         
         layout.addStretch()
-    
     def download_default_sound(self):
         """기본 소리 파일을 다운로드"""
         try:
@@ -1183,17 +1180,6 @@ class RouletteApp(QMainWindow):
         # 이미지 라벨 컨테이너
         self.item_widgets = []
         
-        # 워터마크 라벨 추가 (룰렛 돌아갈 때만 보이게)
-        self.watermark_label = QLabel(self)
-        self.watermark_label.setAlignment(Qt.AlignRight | Qt.AlignBottom)
-        self.watermark_label.setFixedSize(100, 30)  # 작은 크기로 설정
-        self.watermark_label.setStyleSheet("background-color: transparent;")
-        self.watermark_label.hide()  # 초기에는 숨김
-        self.watermark_label.setToolTip("제작: 턴스튜디오")
-        
-        # 워터마크 이미지 로드
-        threading.Thread(target=self.load_watermark_image, args=(WATERMARK_URL,), daemon=True).start()
-        
         # 중간 여백 추가
         spacer = QWidget()
         spacer.setFixedHeight(30)
@@ -1256,51 +1242,6 @@ class RouletteApp(QMainWindow):
         # 틱 사운드 관련 변수
         self.last_tick_time = 0  # 마지막 틱 소리 재생 시간
         self.tick_interval = 0.1  # 초기 틱 소리 간격 (초)
-
-    def load_watermark_image(self, url):
-        """워터마크 이미지를 URL에서 로드"""
-        try:
-            # 로컬 경로 설정
-            watermark_path = WATERMARK_FILE
-            
-            # 파일이 없으면 다운로드
-            if not os.path.exists(watermark_path):
-                print(f"워터마크 이미지 다운로드 중: {url}")
-                response = requests.get(url, stream=True)
-                
-                if response.status_code == 200:
-                    with open(watermark_path, 'wb') as f:
-                        for chunk in response.iter_content(chunk_size=8192):
-                            if chunk:
-                                f.write(chunk)
-                    print(f"워터마크 이미지가 다운로드되었습니다: {watermark_path}")
-                else:
-                    print(f"워터마크 이미지 다운로드 실패: {response.status_code}")
-                    return
-            
-            # 메인 스레드에서 UI 업데이트
-            pixmap = QPixmap(watermark_path)
-            if not pixmap.isNull():
-                # 이미지 크기 조정 및 설정
-                scaled_pixmap = pixmap.scaled(100, 30, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                
-                def update_label():
-                    self.watermark_label.setPixmap(scaled_pixmap)
-
-                # 메인 스레드에서 실행 (더 간단한 방법)
-                QTimer.singleShot(0, update_label)
-                
-                print("워터마크 이미지 로드 완료")
-            else:
-                print("워터마크 이미지 로드 실패")
-        
-        except Exception as e:
-            print(f"워터마크 이미지 로드 오류: {e}")
-
-
-    def update_watermark(self, update_func):
-        """메인 스레드에서 워터마크 업데이트"""
-        update_func()
 
     def check_default_sound(self):
         """기본 사운드 파일이 있는지 확인하고 없으면 다운로드"""
@@ -1480,7 +1421,6 @@ class RouletteApp(QMainWindow):
             self.roulette_frame.hide()
             self.indicator.setText("")
             self.indicator.hide()
-            self.watermark_label.hide()  # 워터마크도 함께 숨김
             
             # 플레이스홀더 표시
             self.placeholder_spacer.show()
@@ -1611,7 +1551,8 @@ class RouletteApp(QMainWindow):
             self.current_profile = self.profiles[0]
             self.update_profile_combo()
             self.update_roulette_items()
-            self.save_profiles()   
+            self.save_profiles()
+    
     # 최적화된 룰렛 항목 업데이트 메서드
     def update_roulette_items(self):
         try:
@@ -1864,18 +1805,6 @@ class RouletteApp(QMainWindow):
             print(f"틱 소리 재생 오류: {e}")
             return False
     
-    def position_watermark(self):
-        """워터마크의 위치를 룰렛 하단에 지정"""
-        if self.roulette_frame.isVisible():
-            # 룰렛 프레임의 위치와 크기 가져오기
-            rect = self.roulette_frame.geometry()
-            
-            # 워터마크 위치 계산 (룰렛 프레임의 오른쪽 아래)
-            watermark_x = rect.right() - self.watermark_label.width() - 10
-            watermark_y = rect.bottom() - self.watermark_label.height() - 5
-            
-            self.watermark_label.move(watermark_x, watermark_y)
-    
     def spin_roulette(self):
         if self.animation_active:
             print("이미 애니메이션 실행 중, 요청은 큐에 있습니다.")
@@ -1905,10 +1834,6 @@ class RouletteApp(QMainWindow):
             self.update_roulette_items()  
             self.roulette_frame.show()
             self.placeholder_spacer.hide()  # 플레이스홀더 숨김
-            
-        # 워터마크 표시 - 룰렛이 돌아갈 때만 표시
-        self.watermark_label.show()
-        self.position_watermark()
         
         # 룰렛이 시작되기 전에 화면 업데이트
         for widget in self.item_widgets:
@@ -2097,9 +2022,6 @@ class RouletteApp(QMainWindow):
             # 부드러운 애니메이션을 위한 필수 이벤트 처리
             QApplication.processEvents()
             
-            # 워터마크 위치 업데이트
-            self.position_watermark()
-            
         except Exception as e:
             print(f"UI 업데이트 오류: {e}")
             QApplication.restoreOverrideCursor()
@@ -2112,7 +2034,6 @@ class RouletteApp(QMainWindow):
             self.settings_button.setEnabled(True)
             self.animation_active = False
             self.roulette_frame.hide()
-            self.watermark_label.hide()  # 워터마크도 함께 숨김
             self.placeholder_spacer.show()  # 플레이스홀더 표시
             return
                 
@@ -2532,11 +2453,11 @@ def start_server(app):
         # 사용 가능한 URL 경로 표시
         profile_count = len(app.profiles)
         print(f"서버가 다음 URL에서 실행 중입니다:")
-        print(f"사용자: {os.environ.get('USERNAME', '사용자')}")
+        print(f"사용자: 턴스튜디오")
         for i in range(profile_count):
             profile_name = app.profiles[i].name
             print(f"프로필 {i+1} ({profile_name}): http://127.0.0.1:8080/r{i+1}")
-            print(f"닉네임 지정: http://127.0.0.1:8080/r{i+1}?nickname=사용자이름")
+            print(f"닉네임 지정: http://127.0.0.1:8080/r{i+1}?nickname={{nickname}}")
             
         server.serve_forever()
     except OSError as e:
@@ -2551,12 +2472,62 @@ def main():
     
     # 스타일 설정
     app.setStyle('Fusion')
-    
+    def download_and_extract_images():
+        import requests
+        import zipfile
+        import os
+        from io import BytesIO
+        
+        # URL for the zip file
+        zip_url = "https://docs.google.com/uc?export=download&id=1gMJXIwkvcS6BmEbjD9JppHD9dtw2R80S"
+        
+        try:
+            print("이미지 패키지 다운로드 중...")
+            # Download the zip file
+            response = requests.get(zip_url, stream=True)
+            
+            if response.status_code == 200:
+                # Extract the zip file in-memory
+                print("이미지 패키지 압축 해제 중...")
+                zip_data = BytesIO(response.content)
+                
+                # Make sure images folder exists
+                if not os.path.exists(IMAGE_FOLDER):
+                    os.makedirs(IMAGE_FOLDER)
+                    print(f"'{IMAGE_FOLDER}' 폴더 생성됨")
+                
+                with zipfile.ZipFile(zip_data) as zip_ref:
+                    # Extract all contents into the images folder, overwriting existing files
+                    for file_info in zip_ref.infolist():
+                        try:
+                            # Get filename without directory structure
+                            file_name = os.path.basename(file_info.filename)
+                            
+                            # Skip if it's a directory entry
+                            if not file_name:
+                                continue
+                                
+                            # Set target path in the images folder
+                            target_path = os.path.join(IMAGE_FOLDER, file_name)
+                            
+                            # Extract the file (will overwrite if exists)
+                            with zip_ref.open(file_info) as source, open(target_path, "wb") as target:
+                                target.write(source.read())
+                                
+                            print(f"파일 추출: {file_name} → {target_path}")
+                        except Exception as e:
+                            print(f"파일 추출 오류 ({file_info.filename}): {e}")
+                            
+                print("이미지 패키지 설치 완료!")
+            else:
+                print(f"다운로드 실패: 상태 코드 {response.status_code}")
+                
+        except Exception as e:
+            print(f"이미지 패키지 다운로드/설치 오류: {e}")
+
     # 디버깅 메시지 출력
     print("룰렛 애플리케이션 시작 중...")
-    print(f"현재 시간: {time.strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"사용자: {os.environ.get('USERNAME', '익명')}")
-    
+    download_and_extract_images()
     # 메인 윈도우 생성
     window = RouletteApp()
     window.show()
