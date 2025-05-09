@@ -81,15 +81,18 @@ class RouletteSignals(QObject):
     play_tick_sound = pyqtSignal()  # 틱 소리 재생 신호 추가
 
 # 룰렛 항목 클래스
+# RouletteItem 클래스에 key_press 속성 추가
 class RouletteItem:
-    def __init__(self, name="룰렛 항목", image_path="", command="", probability=25.0, display_text="", webhook_url=""):
+    def __init__(self, name="룰렛 항목", image_path="", command="", probability=25.0, 
+                 display_text="", webhook_url="", key_press=""):
         self.name = name
         self.image_path = image_path
         self.command = command
         self.probability = probability
         self.display_text = display_text  # 텍스트 모드에서 표시할 텍스트
         self.multiplier = "X1"  # 배율 기본값
-        self.webhook_url = webhook_url  # 추가: 개별 항목의 웹훅 URL
+        self.webhook_url = webhook_url  # 개별 항목의 웹훅 URL
+        self.key_press = key_press  # 눌릴 키 (예: "a", "space", "enter" 등)
     
     def to_dict(self):
         return {
@@ -99,7 +102,8 @@ class RouletteItem:
             'probability': self.probability,
             'display_text': self.display_text,
             'multiplier': getattr(self, 'multiplier', 'X1'),
-            'webhook_url': getattr(self, 'webhook_url', '')  # 추가: 웹훅 URL 저장
+            'webhook_url': getattr(self, 'webhook_url', ''),
+            'key_press': getattr(self, 'key_press', '')  # 키 설정 저장
         }
     
     @staticmethod
@@ -110,7 +114,8 @@ class RouletteItem:
             command=data.get('command', ""),
             probability=data.get('probability', 25.0),
             display_text=data.get('display_text', ""),
-            webhook_url=data.get('webhook_url', "")  # 추가: 웹훅 URL 로드
+            webhook_url=data.get('webhook_url', ""),
+            key_press=data.get('key_press', "")  # 키 설정 로드
         )
         item.multiplier = data.get('multiplier', 'X1')
         return item
@@ -361,7 +366,13 @@ class ItemEditDialog(QDialog):
         buttons_layout.addWidget(self.cancel_button)
         
         layout.addLayout(buttons_layout)
-    
+        #키보드 입력 설정 추가
+        self.key_press_edit = QLineEdit(self.item.key_press)
+        self.key_press_edit.setPlaceholderText("예: a, space, enter, shift")
+        self.key_press_edit.setToolTip("이 항목이 선택되면 지정된 키가 배율만큼 자동으로 입력됩니다")
+        form_layout.addRow("키보드 입력:", self.key_press_edit)
+        
+        layout.addLayout(form_layout)
     def browse_image(self):
         file_name, _ = QFileDialog.getOpenFileName(
             self, "이미지 선택", "", "이미지 파일 (*.png *.jpg *.jpeg *.bmp *.gif)"
@@ -386,6 +397,7 @@ class ItemEditDialog(QDialog):
         self.item.display_text = self.display_text_edit.toPlainText()
         self.item.multiplier = f"X{self.multiplier_spin.value()}"
         self.item.webhook_url = self.webhook_edit.text()
+        self.item.key_press = self.key_press_edit.text()  # 키 입력 저장
         super().accept()
 
 # 웹훅 설정 탭
@@ -1857,7 +1869,29 @@ class RouletteApp(QMainWindow):
         
         # 애니메이션 시작
         self.start_animation()
-    
+    def simulate_key_press(self, key, repeat_count):
+        """키보드 키 입력 시뮬레이션"""
+        try:
+            import keyboard
+            print(f"키 '{key}' {repeat_count}회 입력 시작")
+            
+            # 특수 키 설정
+            for i in range(repeat_count):
+                keyboard.press_and_release(key)
+                time.sleep(0.05)
+                
+                # 10회마다 좀 더 긴 대기
+                if i > 0 and i % 10 == 0:
+                    time.sleep(0.2)
+                    
+            print(f"키 '{key}' {repeat_count}회 입력 완료")
+            return True
+        except ImportError:
+            print("keyboard 라이브러리가 설치되지 않았습니다. 'pip install keyboard' 명령으로 설치하세요.")
+            return False
+        except Exception as e:
+            print(f"키 입력 시뮬레이션 오류: {e}")
+            return False 
     def start_animation(self):
         # 새 스레드에서 애니메이션 실행
         animation_thread = threading.Thread(target=self.animate_roulette, daemon=True)
@@ -2026,6 +2060,7 @@ class RouletteApp(QMainWindow):
             print(f"UI 업데이트 오류: {e}")
             QApplication.restoreOverrideCursor()
             
+    # finish_roulette 함수에 키 입력 시뮬레이션 추가
     def finish_roulette(self, selected_index):
         """룰렛 애니메이션 종료 및 결과 처리"""
         if selected_index < 0:
@@ -2070,9 +2105,20 @@ class RouletteApp(QMainWindow):
             selected_widget.setStyleSheet("background-color: rgba(100, 150, 100, 200); border: 3px solid gold;")
             selected_widget.update()
         
-        # 선택된 항목 처리
-        selected_item = self.selected_items[selected_index]
-        print(f"최종 선택 항목: {selected_item.name}, 배율: {selected_item.multiplier}")
+            # finish_roulette 메소드에서 키 시뮬레이션 코드 부분:
+            selected_item = self.selected_items[selected_index]
+            print(f"최종 선택 항목: {selected_item.name}, 배율: {selected_item.multiplier}")
+
+            # 배율 가져오기 (반복 횟수로 사용)
+            try:
+                repeat_count = int(selected_item.multiplier.replace('X', ''))
+            except (ValueError, AttributeError):
+                repeat_count = 1
+
+            # 키 입력 시뮬레이션 (선택된 항목에 키가 지정되어 있는 경우)
+            if hasattr(selected_item, 'key_press') and selected_item.key_press:
+                threading.Thread(target=self.simulate_key_press, 
+                            args=(selected_item.key_press, repeat_count)).start()
         
         # MCRCON 명령어 실행
         if self.current_profile.mcrcon.enabled and selected_item.command:
@@ -2444,7 +2490,6 @@ class RouletteHandler(BaseHTTPRequestHandler):
     # 로그 출력 방지
     def log_message(self, format, *args):
         return
-
 def start_server(app):
     try:
         server = HTTPServer(('127.0.0.1', 8080), RouletteHandler)
