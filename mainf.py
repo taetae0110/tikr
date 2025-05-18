@@ -55,6 +55,8 @@ DEFAULT_SOUND_URL = "https://cdn.dpvm.xyz/sound.mp3"  # 기본 소리 URL
 DEFAULT_SOUND_FILE = os.path.join(SOUND_FOLDER, "default_sound.mp3")  # 기본 소리 파일 경로
 DEFAULT_TICK_SOUND_URL = "https://docs.google.com/uc?export=download&id=15No95c9IjxJCbP_2xx6UKRY3uhNbyCPZ"  # 기본 틱 소리 URL (없으면 생성해야 함)
 DEFAULT_TICK_SOUND_FILE = os.path.join(SOUND_FOLDER, "tick.mp3")  # 기본 틱 소리 파일 경로
+DEFAULT_FINISH_SOUND_URL = "https://docs.google.com/uc?export=download&id=1UbFAUtkoUjj6L_rvMffuSq2B-N0p2nCH"  # 완료 소리 URL
+DEFAULT_FINISH_SOUND_FILE = os.path.join(SOUND_FOLDER, "finish.mp3")  # 완료 소리 파일 경로
 
 # 폴더가 없으면 생성
 for folder in [CONFIG_FOLDER, IMAGE_FOLDER, SOUND_FOLDER]:
@@ -170,15 +172,18 @@ class WebhookSettings:
             enabled=data.get('enabled', False)
         )
 
-# 소리 설정 클래스 - 틱 소리 옵션 추가
+# 소리 설정 클래스 - 결과 효과음 옵션 추가
 class SoundSettings:
     def __init__(self, sound_path=DEFAULT_SOUND_FILE, enabled=True, volume=80, 
-                 tick_enabled=True, tick_sound_path=DEFAULT_TICK_SOUND_FILE):
+                 tick_enabled=True, tick_sound_path=DEFAULT_TICK_SOUND_FILE,
+                 finish_sound_path=DEFAULT_FINISH_SOUND_FILE, finish_enabled=True):
         self.sound_path = sound_path
         self.enabled = enabled
         self.volume = volume  # 0-100 범위의 볼륨
         self.tick_enabled = tick_enabled  # 틱 소리 활성화 여부
         self.tick_sound_path = tick_sound_path  # 틱 소리 파일 경로
+        self.finish_sound_path = finish_sound_path  # 결과 효과음 파일 경로
+        self.finish_enabled = finish_enabled  # 결과 효과음 활성화 여부
     
     def to_dict(self):
         return {
@@ -186,7 +191,9 @@ class SoundSettings:
             'enabled': self.enabled,
             'volume': self.volume,
             'tick_enabled': self.tick_enabled,
-            'tick_sound_path': self.tick_sound_path
+            'tick_sound_path': self.tick_sound_path,
+            'finish_sound_path': self.finish_sound_path,
+            'finish_enabled': self.finish_enabled
         }
     
     @staticmethod
@@ -196,7 +203,9 @@ class SoundSettings:
             enabled=data.get('enabled', True),
             volume=data.get('volume', 80),
             tick_enabled=data.get('tick_enabled', True),
-            tick_sound_path=data.get('tick_sound_path', DEFAULT_TICK_SOUND_FILE)
+            tick_sound_path=data.get('tick_sound_path', DEFAULT_TICK_SOUND_FILE),
+            finish_sound_path=data.get('finish_sound_path', DEFAULT_FINISH_SOUND_FILE),
+            finish_enabled=data.get('finish_enabled', True)
         )
 
 # 폰트 및 표시 설정 클래스
@@ -597,16 +606,39 @@ class SoundSettingsTab(QWidget):
         self.volume_slider.setSuffix("%")
         self.volume_slider.setValue(self.sound_settings.volume)
         form_layout.addRow("볼륨:", self.volume_slider)
-        
-        # 소리 테스트 버튼
+
+        self.finish_enabled_check = QCheckBox("당첨 효과음 활성화")
+        self.finish_enabled_check.setChecked(self.sound_settings.finish_enabled)
+        self.finish_enabled_check.setToolTip("룰렛 결과가 확정될 때 '따란~' 효과음이 재생됩니다")
+        form_layout.addRow("", self.finish_enabled_check)
+
+        # 결과 효과음 파일 경로 설정
+        finish_sound_layout = QHBoxLayout()
+        self.finish_sound_path_edit = QLineEdit(self.sound_settings.finish_sound_path)
+        self.finish_sound_path_edit.setReadOnly(True)
+        finish_sound_layout.addWidget(self.finish_sound_path_edit)
+
+        self.browse_finish_button = QPushButton("찾아보기...")
+        self.browse_finish_button.clicked.connect(self.browse_finish_sound)
+        finish_sound_layout.addWidget(self.browse_finish_button)
+
+        form_layout.addRow("당첨 효과음 파일:", finish_sound_layout)
+        # test_layout에 당첨 효과음 테스트 버튼 추가
+
         test_layout = QHBoxLayout()
         self.test_sound_button = QPushButton("소리 테스트")
         self.test_sound_button.clicked.connect(self.test_sound)
         test_layout.addWidget(self.test_sound_button)
-        
+
         self.test_tick_sound_button = QPushButton("틱 소리 테스트")
         self.test_tick_sound_button.clicked.connect(self.test_tick_sound)
         test_layout.addWidget(self.test_tick_sound_button)
+
+        # 이 코드를 추가:
+        self.test_finish_sound_button = QPushButton("당첨 효과음 테스트")
+        self.test_finish_sound_button.clicked.connect(self.test_finish_sound)
+        test_layout.addWidget(self.test_finish_sound_button)
+        
         
         # 기본 소리로 재설정 버튼
         self.reset_sound_button = QPushButton("기본 소리로 재설정")
@@ -631,6 +663,39 @@ class SoundSettingsTab(QWidget):
         layout.addWidget(help_label)
         
         layout.addStretch()
+    def browse_finish_sound(self):
+        file_name, _ = QFileDialog.getOpenFileName(
+            self, "당첨 효과음 파일 선택", "", "소리 파일 (*.mp3 *.wav *.ogg *.m4a)"
+        )
+        
+        if file_name:
+            self.finish_sound_path_edit.setText(file_name)
+
+    def test_finish_sound(self):
+        sound_path = self.finish_sound_path_edit.text()
+        
+        if not os.path.exists(sound_path):
+            QMessageBox.warning(self, "당첨 효과음 테스트", f"파일이 존재하지 않습니다: {sound_path}")
+            return
+        
+        try:
+            # 기존 재생 중지
+            self.sound_player.stop()
+            
+            # 새 소리 파일 로드
+            self.sound_player.setMedia(QMediaContent(QUrl.fromLocalFile(sound_path)))
+            
+            # 볼륨 설정
+            volume = self.volume_slider.value()
+            self.sound_player.setVolume(volume)
+            
+            # 소리 재생
+            self.sound_player.play()
+            
+            print(f"당첨 효과음 테스트: {sound_path} (볼륨: {volume}%)")
+            
+        except Exception as e:
+            QMessageBox.critical(self, "당첨 효과음 테스트", f"소리 재생 중 오류 발생: {e}")
     def download_default_sound(self):
         """기본 소리 파일을 다운로드"""
         try:
@@ -769,21 +834,28 @@ class SoundSettingsTab(QWidget):
             QMessageBox.critical(self, "틱 소리 테스트", f"소리 재생 중 오류 발생: {e}")
     
     def reset_to_default_sound(self):
-        # 만약 기본 소리 파일이 없으면 다운로드
+        # 기본 소리 파일들이 없으면 다운로드
         if not os.path.exists(DEFAULT_SOUND_FILE):
             if not self.download_default_sound():
                 QMessageBox.critical(self, "소리 재설정", "기본 소리 파일을 다운로드할 수 없습니다.")
                 return
-                
+                    
         # 기본 틱 소리 파일 확인
         if not os.path.exists(DEFAULT_TICK_SOUND_FILE):
             if not self.download_tick_sound():
                 QMessageBox.critical(self, "소리 재설정", "기본 틱 소리 파일을 준비할 수 없습니다.")
                 return
         
-        # 기본 소리 파일로 재설정
+        # 기본 당첨 효과음 파일 확인
+        if not os.path.exists(DEFAULT_FINISH_SOUND_FILE):
+            if not self.download_finish_sound():
+                QMessageBox.critical(self, "소리 재설정", "기본 당첨 효과음 파일을 다운로드할 수 없습니다.")
+                return
+        
+        # 기본 소리 파일들로 재설정
         self.sound_path_edit.setText(DEFAULT_SOUND_FILE)
         self.tick_sound_path_edit.setText(DEFAULT_TICK_SOUND_FILE)
+        self.finish_sound_path_edit.setText(DEFAULT_FINISH_SOUND_FILE)
         QMessageBox.information(self, "소리 재설정", "기본 소리로 재설정되었습니다.")
     
     def save_settings(self):
@@ -792,6 +864,8 @@ class SoundSettingsTab(QWidget):
         self.sound_settings.volume = self.volume_slider.value()
         self.sound_settings.tick_enabled = self.tick_enabled_check.isChecked()
         self.sound_settings.tick_sound_path = self.tick_sound_path_edit.text()
+        self.sound_settings.finish_enabled = self.finish_enabled_check.isChecked()  # 추가
+        self.sound_settings.finish_sound_path = self.finish_sound_path_edit.text()  # 추가
         return self.sound_settings
 
 # 표시 설정 탭 (폰트, 색상 등)
@@ -1097,6 +1171,7 @@ class RouletteApp(QMainWindow):
         # 소리 플레이어 초기화
         self.sound_player = QMediaPlayer()
         self.tick_player = QMediaPlayer()
+        self.finish_player = QMediaPlayer()  # 완료 소리 재생용 플레이어 추가
         
         # 프로필 관리
         self.profiles = self.load_profiles()
@@ -1267,9 +1342,14 @@ class RouletteApp(QMainWindow):
             if not os.path.exists(DEFAULT_TICK_SOUND_FILE):
                 print("기본 틱 소리 파일이 없습니다. 다운로드를 시도합니다.")
                 self.download_tick_sound()
+                
+            # 완료 소리 파일 확인
+            if not os.path.exists(DEFAULT_FINISH_SOUND_FILE):
+                print("완료 소리 파일이 없습니다. 다운로드를 시도합니다.")
+                self.download_finish_sound()
         except Exception as e:
             print(f"기본 소리 파일 확인 중 오류: {e}")
-    
+
     def download_default_sound(self):
         """기본 소리 파일을 다운로드"""
         try:
@@ -1290,7 +1370,7 @@ class RouletteApp(QMainWindow):
         except Exception as e:
             print(f"소리 파일 다운로드 오류: {e}")
             return False
-    
+
     def download_tick_sound(self):
         """기본 틱 소리 파일을 다운로드"""
         try:
@@ -1317,7 +1397,28 @@ class RouletteApp(QMainWindow):
         except Exception as e:
             print(f"틱 소리 준비 오류: {e}")
             return False
-    
+
+    def download_finish_sound(self):
+        """기본 당첨 효과음 파일을 다운로드"""
+        try:
+            print(f"기본 당첨 효과음 파일 다운로드 중: {DEFAULT_FINISH_SOUND_URL}")
+            response = requests.get(DEFAULT_FINISH_SOUND_URL, stream=True)
+            
+            if response.status_code == 200:
+                with open(DEFAULT_FINISH_SOUND_FILE, 'wb') as f:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        if chunk:
+                            f.write(chunk)
+                print(f"기본 당첨 효과음 파일이 다운로드되었습니다: {DEFAULT_FINISH_SOUND_FILE}")
+                return True
+            else:
+                print(f"당첨 효과음 파일 다운로드 실패: {response.status_code}")
+                return False
+                    
+        except Exception as e:
+            print(f"당첨 효과음 파일 다운로드 오류: {e}")
+            return False
+
     def create_default_tick_sound(self):
         """기본 틱 소리를 생성합니다 (웨이브 파일로)"""
         try:
@@ -1352,7 +1453,7 @@ class RouletteApp(QMainWindow):
 
     def mouseReleaseEvent(self, event):
         self.drag_position = None
-    
+
     def update_profile_combo(self):
         self.profile_combo.blockSignals(True)
         self.profile_combo.clear()
@@ -1363,7 +1464,7 @@ class RouletteApp(QMainWindow):
         if self.profiles:
             self.profile_combo.setCurrentIndex(self.current_profile_index)
         self.profile_combo.blockSignals(False)
-    
+
     def update_indicator(self, nickname):
         """닉네임 정보를 indicator 라벨에 표시"""
         try:
@@ -1426,7 +1527,7 @@ class RouletteApp(QMainWindow):
             
         except Exception as e:
             print(f"타이틀바 토글 오류: {e}")
-    
+
     def hide_elements(self):
         """룰렛 프레임과 인디케이터를 숨기고 플레이스홀더를 표시"""
         try:
@@ -1491,7 +1592,7 @@ class RouletteApp(QMainWindow):
             ]))
         
         return profiles
-    
+
     def save_profiles(self):
         try:
             # 이전 설정 파일 모두 삭제
@@ -1507,7 +1608,7 @@ class RouletteApp(QMainWindow):
         except Exception as e:
             print(f"프로필 저장 오류: {e}")
             QMessageBox.critical(self, "저장 오류", f"프로필 저장 중 오류가 발생했습니다: {e}")
-    
+
     def change_profile(self, index):
         if 0 <= index < len(self.profiles) and not self.animation_active:
             self.current_profile_index = index
@@ -1518,7 +1619,7 @@ class RouletteApp(QMainWindow):
             self.copy_link_button.setToolTip(f"프로필 {profile_number} ({self.current_profile.name})의 링크 복사")
             
             self.update_roulette_items()
-    
+
     def add_profile(self):
         if len(self.profiles) >= 10:
             QMessageBox.warning(self, "프로필 제한", "프로필은 최대 10개까지만 추가할 수 있습니다.")
@@ -1534,20 +1635,20 @@ class RouletteApp(QMainWindow):
             self.update_profile_combo()
             self.update_roulette_items()
             self.save_profiles()
-    
+
     def rename_profile(self):
         if not self.profiles:
             return
             
         current_name = self.current_profile.name
         new_name, ok = QInputDialog.getText(self, "프로필 이름 변경", 
-                                          "새 이름:", text=current_name)
+                                        "새 이름:", text=current_name)
         
         if ok and new_name:
             self.current_profile.name = new_name
             self.update_profile_combo()
             self.save_profiles()
-    
+
     def delete_profile(self):
         if not self.profiles or len(self.profiles) <= 1:
             QMessageBox.warning(self, "프로필 삭제 불가", "최소 하나의 프로필은 유지해야 합니다.")
@@ -1564,7 +1665,7 @@ class RouletteApp(QMainWindow):
             self.update_profile_combo()
             self.update_roulette_items()
             self.save_profiles()
-    
+
     # 최적화된 룰렛 항목 업데이트 메서드
     def update_roulette_items(self):
         try:
@@ -1742,7 +1843,7 @@ class RouletteApp(QMainWindow):
             self.current_profile = dialog.profile
             self.update_roulette_items()
             self.save_profiles()
-    
+
     def play_roulette_sound(self):
         """룰렛 시작 소리 재생"""
         try:
@@ -1774,7 +1875,7 @@ class RouletteApp(QMainWindow):
         except Exception as e:
             print(f"소리 재생 오류: {e}")
             return False
-    
+
     def play_tick_sound(self):
         """룰렛 회전 중 틱 소리 재생"""
         try:
@@ -1816,7 +1917,42 @@ class RouletteApp(QMainWindow):
         except Exception as e:
             print(f"틱 소리 재생 오류: {e}")
             return False
-    
+
+    def play_finish_sound(self):
+        """룰렛 완료 소리 재생"""
+        try:
+            # 소리 설정 확인
+            sound_settings = self.current_profile.sound
+            if not sound_settings.enabled or not sound_settings.finish_enabled:
+                print("소리 기능 또는 당첨 효과음이 비활성화되어 있습니다.")
+                return False
+            
+            # 소리 파일 경로 확인
+            finish_sound_path = sound_settings.finish_sound_path
+            if not os.path.exists(finish_sound_path):
+                print(f"당첨 효과음 파일이 존재하지 않습니다: {finish_sound_path}")
+                # 기본 당첨 소리로 대체
+                if not os.path.exists(DEFAULT_FINISH_SOUND_FILE):
+                    self.download_finish_sound()
+                finish_sound_path = DEFAULT_FINISH_SOUND_FILE
+            
+            # 현재 재생중인 소리 중지
+            self.finish_player.stop()
+            
+            # 소리 로드 및 볼륨 설정
+            self.finish_player.setMedia(QMediaContent(QUrl.fromLocalFile(finish_sound_path)))
+            self.finish_player.setVolume(sound_settings.volume)
+            
+            # 소리 재생
+            self.finish_player.play()
+            
+            print(f"당첨 효과음 재생 시작: {finish_sound_path} (볼륨: {sound_settings.volume}%)")
+            return True
+                
+        except Exception as e:
+            print(f"당첨 효과음 재생 오류: {e}")
+            return False
+
     def spin_roulette(self):
         if self.animation_active:
             print("이미 애니메이션 실행 중, 요청은 큐에 있습니다.")
@@ -1827,7 +1963,7 @@ class RouletteApp(QMainWindow):
             print("요소 숨기기 타이머 취소됨 - 수동 룰렛 실행")
             self.hide_timer.stop()
             self.hide_timer = None
-    
+
         if not self.current_profile.items:
             print("항목이 없습니다")
             # 큐의 요청을 처리
@@ -1869,6 +2005,7 @@ class RouletteApp(QMainWindow):
         
         # 애니메이션 시작
         self.start_animation()
+
     def simulate_key_press(self, key, repeat_count):
         """키보드 키 입력 시뮬레이션"""
         try:
@@ -1891,12 +2028,13 @@ class RouletteApp(QMainWindow):
             return False
         except Exception as e:
             print(f"키 입력 시뮬레이션 오류: {e}")
-            return False 
+            return False
+
     def start_animation(self):
         # 새 스레드에서 애니메이션 실행
         animation_thread = threading.Thread(target=self.animate_roulette, daemon=True)
         animation_thread.start()
-    
+
     def animate_roulette(self):
         print("애니메이션 시작")
         
@@ -1954,7 +2092,7 @@ class RouletteApp(QMainWindow):
         except Exception as e:
             print(f"애니메이션 오류: {e}")
             self.signals.finish_animation.emit(-1)
-    
+
     def select_item_by_probability(self):
         """확률에 따라 항목을 선택"""
         if not self.current_profile.items:
@@ -2101,24 +2239,27 @@ class RouletteApp(QMainWindow):
             selected_idx = (selected_index - center_idx) % len(self.item_widgets)
             selected_widget = self.item_widgets[selected_idx] if 0 <= selected_idx < len(self.item_widgets) else None
         
+        # 선택된 위젯 강조 후, 완료 소리 재생
         if selected_widget:
             selected_widget.setStyleSheet("background-color: rgba(100, 150, 100, 200); border: 3px solid gold;")
             selected_widget.update()
         
-            # finish_roulette 메소드에서 키 시뮬레이션 코드 부분:
-            selected_item = self.selected_items[selected_index]
-            print(f"최종 선택 항목: {selected_item.name}, 배율: {selected_item.multiplier}")
+        # 완료 소리 재생
+        self.play_finish_sound()
+        
+        selected_item = self.selected_items[selected_index]
+        print(f"최종 선택 항목: {selected_item.name}, 배율: {selected_item.multiplier}")
 
-            # 배율 가져오기 (반복 횟수로 사용)
-            try:
-                repeat_count = int(selected_item.multiplier.replace('X', ''))
-            except (ValueError, AttributeError):
-                repeat_count = 1
+        # 배율 가져오기 (반복 횟수로 사용)
+        try:
+            repeat_count = int(selected_item.multiplier.replace('X', ''))
+        except (ValueError, AttributeError):
+            repeat_count = 1
 
-            # 키 입력 시뮬레이션 (선택된 항목에 키가 지정되어 있는 경우)
-            if hasattr(selected_item, 'key_press') and selected_item.key_press:
-                threading.Thread(target=self.simulate_key_press, 
-                            args=(selected_item.key_press, repeat_count)).start()
+        # 키 입력 시뮬레이션 (선택된 항목에 키가 지정되어 있는 경우)
+        if hasattr(selected_item, 'key_press') and selected_item.key_press:
+            threading.Thread(target=self.simulate_key_press, 
+                        args=(selected_item.key_press, repeat_count)).start()
         
         # MCRCON 명령어 실행
         if self.current_profile.mcrcon.enabled and selected_item.command:
@@ -2174,8 +2315,8 @@ class RouletteApp(QMainWindow):
         
         # 사용자에게 알림
         QMessageBox.information(self, "링크 복사", 
-                             f"프로필 '{self.current_profile.name}'의 URL이 클립보드에 복사되었습니다:\n{url}\n\n"
-                             f"이 URL에서 'nickname=' 부분을 수정하여 사용자 닉네임을 지정할 수 있습니다.")
+                            f"프로필 '{self.current_profile.name}'의 URL이 클립보드에 복사되었습니다:\n{url}\n\n"
+                            f"이 URL에서 'nickname=' 부분을 수정하여 사용자 닉네임을 지정할 수 있습니다.")
 
     def add_roulette_request(self, profile_index, nickname=None):
         """룰렛 요청을 큐에 추가하고 처리"""
@@ -2211,7 +2352,7 @@ class RouletteApp(QMainWindow):
         # 룰렛이 회전 중이 아니면 바로 실행
         if not self.animation_active:
             self.process_next_request()
-    
+
     def process_next_request(self):
         """큐에서 다음 룰렛 요청을 처리 (같은 사용자의 요청은 연속해서)"""
         if not self.request_queue:
@@ -2254,7 +2395,7 @@ class RouletteApp(QMainWindow):
         
         # 닉네임 표시
         self.update_indicator(nickname)
-        
+
         # 룰렛 프레임이 숨겨져 있으면 표시
         if not self.roulette_frame.isVisible():
             self.roulette_frame.show()
@@ -2490,6 +2631,7 @@ class RouletteHandler(BaseHTTPRequestHandler):
     # 로그 출력 방지
     def log_message(self, format, *args):
         return
+
 def start_server(app):
     try:
         server = HTTPServer(('127.0.0.1', 8080), RouletteHandler)
